@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini CRM</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f6fa; color: #222; }
+    header { background: #2f5496; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 20px; }
+    button { background: #2f5496; color: #fff; border: 0; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #24407a; }
+    header button { background: #fff; color: #2f5496; }
+    nav { padding: 12px 24px 0; }
+    nav button { background: #dfe6f3; color: #2f5496; margin-right: 6px; }
+    nav button.active { background: #2f5496; color: #fff; }
+    main { display: flex; gap: 20px; padding: 16px 24px; }
+    .panel { background: #fff; border-radius: 6px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    #list { flex: 1; } #detail { flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e3e7ef; }
+    th { background: #eef2fa; }
+    tr.row:hover { background: #f0f4fc; cursor: pointer; }
+    input[type=text], textarea { width: 100%; padding: 8px; margin: 4px 0 10px; border: 1px solid #c8d0e0; border-radius: 4px; font-family: inherit; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #e3e7ef; }
+    .completed { background: #d4edda; } .processing { background: #fff3cd; } .pending { background: #e2e3e5; } .cancelled { background: #f8d7da; }
+    .msg { border-left: 3px solid #2f5496; padding: 6px 10px; margin: 8px 0; background: #f7f9fd; font-size: 13px; }
+    .muted { color: #777; font-size: 12px; }
+    h3 { margin: 16px 0 6px; }
+    #status { font-size: 13px; margin-right: 12px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mini CRM &middot; WooCommerce</h1>
+    <div><span id="status"></span><button onclick="runSync()">Sync from WooCommerce</button></div>
+  </header>
+
+  <nav>
+    <button id="tab-customers" class="active" onclick="showTab('customers')">Customers</button>
+    <button id="tab-orders" onclick="showTab('orders')">Orders</button>
+    <button id="tab-comms" onclick="showTab('comms')">Communications</button>
+  </nav>
+
+  <main>
+    <div class="panel" id="list">
+      <div id="customers-view">
+        <input type="text" id="search" placeholder="Search by name or email..." oninput="loadCustomers()">
+        <table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tags</th></tr></thead><tbody id="customers-body"></tbody></table>
+      </div>
+      <div id="orders-view" class="hidden">
+        <table><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Total</th><th>Date</th></tr></thead><tbody id="orders-body"></tbody></table>
+      </div>
+      <div id="comms-view" class="hidden">
+        <table><thead><tr><th>When</th><th>To</th><th>Trigger</th><th>Subject</th></tr></thead><tbody id="comms-body"></tbody></table>
+      </div>
+    </div>
+    <div class="panel" id="detail"><p class="muted">Select a customer to see their details.</p></div>
+  </main>
+
+<script>
+let currentCustomer = null;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate = d => d ? String(d).replace('T', ' ').slice(0, 16) : '';
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+function showTab(name) {
+  for (const t of ['customers', 'orders', 'comms']) {
+    document.getElementById(t + '-view').classList.toggle('hidden', t !== name);
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+  }
+  refresh();
+}
+
+async function loadCustomers() {
+  const q = document.getElementById('search').value;
+  const rows = await api('/customers' + (q ? '?search=' + encodeURIComponent(q) : ''));
+  document.getElementById('customers-body').innerHTML = rows.map(c => `
+    <tr class="row" onclick="openCustomer(${c.id})">
+      <td>${esc(c.first_name)} ${esc(c.last_name)}</td><td>${esc(c.email)}</td><td>${esc(c.phone)}</td><td>${esc(c.tags)}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="muted">No customers yet. Click "Sync from WooCommerce".</td></tr>';
+}
+
+async function loadOrders() {
+  const rows = await api('/orders');
+  document.getElementById('orders-body').innerHTML = rows.map(o => `
+    <tr class="row" onclick="openCustomer(${o.customer_id})">
+      <td>#${o.woo_id}</td><td>${esc(o.first_name)} ${esc(o.last_name)}</td>
+      <td><span class="badge ${esc(o.status)}">${esc(o.status)}</span></td>
+      <td>${esc(o.total)} ${esc(o.currency)}</td><td>${fmtDate(o.created_at)}</td>
+    </tr>`).join('');
+}
+
+async function loadComms() {
+  const rows = await api('/communications');
+  document.getElementById('comms-body').innerHTML = rows.map(m => `
+    <tr><td>${fmtDate(m.sent_at)}</td><td>${esc(m.email)}</td><td>${esc(m.trigger_event)}</td><td>${esc(m.subject)}</td></tr>`).join('');
+}
+
+async function openCustomer(id) {
+  currentCustomer = id;
+  const c = await api('/customers/' + id);
+  document.getElementById('detail').innerHTML = `
+    <h2>${esc(c.first_name)} ${esc(c.last_name)}</h2>
+    <div class="muted">${esc(c.email)} &middot; ${esc(c.phone)}</div>
+
+    <h3>Notes &amp; tags</h3>
+    <textarea id="notes" rows="3" placeholder="Internal notes...">${esc(c.notes)}</textarea>
+    <input type="text" id="tags" placeholder="Tags (comma separated)" value="${esc(c.tags)}">
+    <button onclick="saveCustomer(${c.id})">Save</button>
+
+    <h3>Orders (${c.orders.length})</h3>
+    ${c.orders.map(o => `
+      <div class="msg"><b>#${o.woo_id}</b> <span class="badge ${esc(o.status)}">${esc(o.status)}</span>
+      &middot; ${esc(o.total)} ${esc(o.currency)}<br>
+      <span class="muted">${o.items.map(i => esc(i.product_name) + ' x' + i.quantity).join(', ')}</span></div>`).join('') || '<p class="muted">No orders.</p>'}
+
+    <h3>Communication timeline (${c.communications.length})</h3>
+    ${c.communications.map(m => `
+      <div class="msg"><b>${esc(m.subject)}</b><br>${esc(m.body)}<br>
+      <span class="muted">${fmtDate(m.sent_at)} &middot; ${esc(m.trigger_event)}</span></div>`).join('') || '<p class="muted">No messages yet.</p>'}
+  `;
+}
+
+async function saveCustomer(id) {
+  await api('/customers/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ notes: document.getElementById('notes').value, tags: document.getElementById('tags').value })
+  });
+  setStatus('Saved');
+  loadCustomers();
+}
+
+async function runSync() {
+  setStatus('Syncing...');
+  try {
+    const r = await api('/sync', { method: 'POST' });
+    setStatus(`Synced ${r.customers} customers, ${r.orders} orders`);
+    refresh();
+  } catch (e) { setStatus('Sync failed: ' + e.message); }
+}
+
+function setStatus(t) { document.getElementById('status').textContent = t; }
+
+function refresh() {
+  if (!document.getElementById('customers-view').classList.contains('hidden')) loadCustomers();
+  else if (!document.getElementById('orders-view').classList.contains('hidden')) loadOrders();
+  else loadComms();
+}
+
+refresh();
+setInterval(() => { refresh(); if (currentCustomer && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') openCustomer(currentCustomer); }, 5000);
+</script>
+</body>
+</html>
